@@ -28,7 +28,7 @@ interface ZLib extends Library {
             if(overridden != null) {
                 return new File(overridden);
             }
-            if(Platform.isWindows()) {
+            if (Platform.isWindows()) {
                 return new File("lib/" + (Platform.is64Bit() ? "zlibwapi-1.2.5-64.dll" : "zlibwapi-1.2.5-32.dll"));
             } else if(Platform.isLinux()) {
                 return new File("lib/" + (Platform.is64Bit() ? "libz-64.so.1.2.5" : "libz-32.so.1.2.5"));

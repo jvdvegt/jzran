@@ -12,7 +12,7 @@ import java.util.List;
  *
  * If you have trouble loading the zlib library, just specify
  * the jzran.zlib.file property, for example
- * <tt>java -Djzran.zlib.file=/path/to/zlib-mac.dylib</tt>.
+ * <code>java -Djzran.zlib.file=/path/to/zlib-mac.dylib</code>.
  */
 public class RandomAccessDeflate {
 

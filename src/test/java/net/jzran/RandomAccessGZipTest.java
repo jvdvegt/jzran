@@ -1,15 +1,16 @@
 package net.jzran;
 
-import org.junit.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.*;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.util.Random;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.GZIPOutputStream;
 
-import static junit.framework.Assert.assertEquals;
+import org.junit.jupiter.api.Test;
 
 public class RandomAccessGZipTest {
     @Test
@@ -29,7 +30,7 @@ public class RandomAccessGZipTest {
         TestPair testPair = new TestPair();
         File tmp = File.createTempFile("zip-test", ".zip");
         tmp.deleteOnExit();
-        try (OutputStream os = new FileOutputStream(tmp)) {
+        try (OutputStream os = Files.newOutputStream(tmp.toPath())) {
             os.write(testPair.zipped);
         }
         testCorrectness(testPair.uncompressed, new FileSeekableInputStream(new RandomAccessFile(tmp, "r")));
@@ -49,7 +50,6 @@ public class RandomAccessGZipTest {
             deflater.end();
         }
         byte[] deflated = baos.toByteArray();
-
         SeekableInputStream sis = new ByteArraySeekableInputStream(deflated);
         DeflateIndex index = RandomAccessDeflate.index(sis, 1_048_576);
 
@@ -78,7 +78,7 @@ public class RandomAccessGZipTest {
                 off += n;
             }
             for (int i = 0; i < off; i++) {
-                assertEquals((byte) uncompressed[offset + i], buf[i]);
+                assertEquals(uncompressed[offset + i], buf[i]);
             }
         }
     }

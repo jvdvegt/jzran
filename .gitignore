@@ -3,6 +3,7 @@
 target/
 **/target/
 build/
+javadoc/
 
 ## ant specific ##
 bin/

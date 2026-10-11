@@ -1,0 +1,31 @@
+## maven specific ##
+*.log
+target/
+**/target/
+build/
+
+## ant specific ##
+bin/
+
+## java specific ##
+*.class
+
+# Package Files #
+*.jar
+*.war
+*.ear
+
+## eclipse specific ##
+.classpath
+.project
+.wtpmodules
+.settings
+.checkstyle
+
+## Intellij ##
+.idea/
+*.iml
+*.iws
+
+## MacOSX ##
+.DS_Store

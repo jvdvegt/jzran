@@ -24,8 +24,8 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
 
     private static final int BUF_SIZE = 1048576;
 
-    private List<ZRan.Point> idx;
-    private long decompressedSize;
+    private final List<ZRan.Point> idx;
+    private final long decompressedSize;
     private State state;
 
     private transient Memory mem;
@@ -104,13 +104,13 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
     }
 
     @Override
-    public int available() throws IOException {
+    public int available() {
         ensureOpen();
         return (int) Math.min(Integer.MAX_VALUE, length() - pos);
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (state != State.OPEN) {
             throw new IllegalStateException("Can only close an open stream");
         }

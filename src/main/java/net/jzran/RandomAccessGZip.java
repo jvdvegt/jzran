@@ -1,9 +1,7 @@
 package net.jzran;
 
-import com.sun.jna.Memory;
-
-import java.io.*;
-import java.nio.ByteBuffer;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 
 /**
@@ -29,9 +27,9 @@ public class RandomAccessGZip {
      *   along the way ("cancel").
      */
     public static DeflateIndex index(InputStream input, long span, ProgressListener<Long> listener) throws IOException {
-        long[] holder = {0L};
-        List<ZRan.Point> idx = ZRan.buildGzipIndex(input, span, holder, listener);
-        return idx == null ? null : new DeflateIndex(idx, holder[0]);
+        long[] decompressedSizeHolder = {0L};
+        List<ZRan.Point> idx = ZRan.buildGZipIndex(input, span, decompressedSizeHolder, listener);
+        return idx == null ? null : new DeflateIndex(idx, decompressedSizeHolder[0]);
     }
 
     /**

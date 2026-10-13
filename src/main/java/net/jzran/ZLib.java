@@ -115,4 +115,19 @@ interface ZLib extends Library {
     int Z_NO_FLUSH = 0;
 
     int STREAM_SIZE = new z_stream().size();
+
+    static String nameForCode(int code) {
+        return switch (code){
+            case Z_OK -> "OK";
+            case Z_STREAM_END -> "STREAM_END";
+            case Z_NEED_DICT -> "NEED_DICT";
+            case Z_ERRNO -> "ERRNO";
+            case Z_STREAM_ERROR -> "STREAM_ERROR";
+            case Z_DATA_ERROR -> "DATA_ERROR";
+            case Z_MEM_ERROR -> "MEM_ERROR";
+            case Z_BUF_ERROR -> "BUF_ERROR";
+            case Z_VERSION_ERROR -> "VERSION_ERROR";
+            default -> throw new IllegalStateException("Unexpected value: " + code);
+        };
+    }
 }

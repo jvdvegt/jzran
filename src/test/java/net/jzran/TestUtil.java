@@ -2,10 +2,8 @@ package net.jzran;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Random;
-import java.util.zip.GZIPOutputStream;
 
 final class TestUtil {
     private TestUtil() {
@@ -37,19 +35,4 @@ final class TestUtil {
         }
     }
 
-    static class TestPair {
-        final byte[] uncompressed;
-        final byte[] zipped;
-
-        public TestPair() throws IOException {
-            uncompressed = new byte[10_485_739];
-            new Random().nextBytes(uncompressed);
-
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            try (GZIPOutputStream zos = new GZIPOutputStream(baos)) {
-                zos.write(uncompressed);
-            }
-            zipped = baos.toByteArray();
-        }
-    }
 }

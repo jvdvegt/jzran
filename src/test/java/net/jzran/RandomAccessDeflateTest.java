@@ -4,8 +4,10 @@ import static net.jzran.TestUtil.testCorrectness;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.util.Random;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 
@@ -15,7 +17,7 @@ public class RandomAccessDeflateTest {
 
     @Test
     public void testDeflateStream() throws Exception {
-        TestUtil.TestPair testPair = new TestUtil.TestPair();
+        TestPair testPair = new TestPair();
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
@@ -42,6 +44,27 @@ public class RandomAccessDeflateTest {
         SeekableInputStream seekableInputStream = new ByteArraySeekableInputStream(deflated);
         deflateIndex.open(seekableInputStream);
         testCorrectness(testPair.uncompressed, deflateIndex);
+    }
+
+    static class TestPair {
+        final byte[] uncompressed;
+        final byte[] compressed;
+
+        public TestPair() throws IOException {
+            uncompressed = new byte[10_485_739];
+            new Random().nextBytes(uncompressed);
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
+
+            try (DeflaterOutputStream outputStream = new DeflaterOutputStream(baos, deflater)) {
+                outputStream.write(uncompressed);
+            }
+            finally {
+                deflater.end();
+            }
+            compressed = baos.toByteArray();
+        }
     }
 
 }

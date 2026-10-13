@@ -11,7 +11,8 @@ import java.util.List;
 import com.sun.jna.Memory;
 
 public class DeflateIndex extends SeekableInputStream implements Serializable {
-    private enum State {
+
+    protected enum State {
         // inStream is not set
         VOID,
         // inStream is set but no seek was done
@@ -22,10 +23,11 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
     }
     // transitions: state -> state + 1
 
-    private static final int BUF_SIZE = 1048576;
+    private static final int BUF_SIZE = 1_048_576;
 
     private final List<ZRan.Point> idx;
     private final long decompressedSize;
+
     private State state;
 
     private transient Memory mem;
@@ -118,11 +120,12 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
         state = State.CLOSED;
     }
 
+    @Override
     public int read(byte[] buf, int offset, int len) throws IOException {
         ensureOpen();
         int n = extractor.extract(mem, Math.min(len, BUF_SIZE));
         if (n < 0)
-            return 0;  // End of stream
+            return -1;  // End of stream
         memBuf.position(0);
         memBuf.get(buf, offset, n);
         pos += n;

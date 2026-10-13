@@ -3,28 +3,30 @@ package net.jzran;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.util.Random;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.GZIPOutputStream;
 
 import org.junit.jupiter.api.Test;
-
-import net.jzran.TestUtil.TestPair;
 
 public class RandomAccessGZipTest {
     @Test
     public void testGzipByteArray() throws Exception {
         TestPair testPair = new TestPair();
-        testCorrectness(testPair.uncompressed, new ByteArraySeekableInputStream(testPair.zipped, 0, testPair.zipped.length));
+        testCorrectness(testPair.uncompressed, new ByteArraySeekableInputStream(testPair.compressed, 0, testPair.compressed.length));
     }
 
     @Test
     public void testGzipByteBuffer() throws Exception {
         TestPair testPair = new TestPair();
-        testCorrectness(testPair.uncompressed, new ByteBufferSeekableInputStream(ByteBuffer.wrap(testPair.zipped)));
+        testCorrectness(testPair.uncompressed, new ByteBufferSeekableInputStream(ByteBuffer.wrap(testPair.compressed)));
     }
 
     @Test
@@ -33,7 +35,7 @@ public class RandomAccessGZipTest {
         File tmp = File.createTempFile("zip-test", ".zip");
         tmp.deleteOnExit();
         try (OutputStream os = Files.newOutputStream(tmp.toPath())) {
-            os.write(testPair.zipped);
+            os.write(testPair.compressed);
         }
         testCorrectness(testPair.uncompressed, new FileSeekableInputStream(new RandomAccessFile(tmp, "r")));
     }
@@ -54,5 +56,21 @@ public class RandomAccessGZipTest {
         index.open(sis);
 
         TestUtil.testCorrectness(expected, index);
+    }
+
+    static class TestPair {
+        final byte[] uncompressed;
+        final byte[] compressed;
+
+        public TestPair() throws IOException {
+            uncompressed = new byte[10_485_739];
+            new Random().nextBytes(uncompressed);
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            try (DeflaterOutputStream outputStream = new GZIPOutputStream(baos)) {
+                outputStream.write(uncompressed);
+            }
+            compressed = baos.toByteArray();
+        }
     }
 }

@@ -2,6 +2,7 @@ package net.jzran;
 
 import com.sun.jna.Memory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Serializable;
@@ -14,17 +15,17 @@ import java.util.List;
  * from the examples to zlib 1.2.3.
  */
 class ZRan {
+    static final int WINDOW_BITS = 15;
     private static final ZLib Z = ZLib.INSTANCE;
 
     private static final int CHUNK = 65536;
-    private static final int WINDOW_BITS = 15;
-    private static final int WINSIZE = 1 << WINDOW_BITS;
+    private static final int WINDOW_SIZE = 1 << WINDOW_BITS;
 
     static class Point implements Serializable {
         private final long out;
         private final long in;
         private final int bits;
-        private final byte[] window = new byte[WINSIZE];
+        private final byte[] window = new byte[WINDOW_SIZE];
 
         private Point(long out, long in, int bits) {
             this.out = out;
@@ -33,29 +34,26 @@ class ZRan {
         }
     }
 
-    static void addpoint(List<Point> index, int bits, long in, long out, int left, Memory window) {
+    static Point createPoint(int bits, long in, long out, int left, Memory window) {
         Point p = new Point(out, in, bits);
-        index.add(p);
         if (left != 0) {
-            System.arraycopy(window.getByteArray(0, WINSIZE), WINSIZE - left, p.window, 0, left);
+            System.arraycopy(window.getByteArray(0, WINDOW_SIZE), WINDOW_SIZE - left, p.window, 0, left);
         }
-        if (left < WINSIZE) {
-            System.arraycopy(window.getByteArray(0, WINSIZE), 0, p.window, left, WINSIZE - left);
+        if (left < WINDOW_SIZE) {
+            System.arraycopy(window.getByteArray(0, WINDOW_SIZE), 0, p.window, left, WINDOW_SIZE - left);
         }
+        return p;
     }
 
-    static List<Point> buildGzipIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener)
-        throws IOException {
-        return build_index(in, span, decompressedSize, listener, 32 + WINDOW_BITS);/* automatic zlib or gzip decoding */
+    static List<Point> buildDeflateIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener) throws IOException {
+        return buildIndex(in, span, decompressedSize, listener, -ZRan.WINDOW_BITS);
     }
 
-    static List<Point> buildDeflateIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener)
-        throws IOException {
-        return build_index(in, span, decompressedSize, listener, -WINDOW_BITS);
+    static List<Point> buildGZipIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener) throws IOException {
+        return buildIndex(in, span, decompressedSize, listener, 32 + ZRan.WINDOW_BITS);         /* automatic zlib or gzip decoding */
     }
 
-    private static List<Point> build_index(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener, int windowBits)
-            throws IOException {
+    private static List<Point> buildIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener, int windowBits) throws IOException {
         int ret;
         long totin, totout;  /* our own total counters to avoid 4GB limit */
         long last;                 /* totout value of last access Point */
@@ -63,7 +61,7 @@ class ZRan {
         z_stream strm = new z_stream();
         Memory input = new Memory(CHUNK);
         ByteBuffer bb = input.getByteBuffer(0, CHUNK);
-        Memory window = new Memory(WINSIZE);
+        Memory window = new Memory(WINDOW_SIZE);
         byte[] buf = new byte[CHUNK];
 
         /* initialize inflate */
@@ -73,19 +71,19 @@ class ZRan {
         strm.avail_in = 0;
         strm.next_in = null;
 
-//        see https://www.zlib.net/manual.html#Advanced for window bits
+        // see https://www.zlib.net/manual.html#Advanced for window bits
         ret = Z.inflateInit2_(strm, windowBits, Z.zlibVersion(), ZLib.STREAM_SIZE);
         try {
             if (ret != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + ret);
             }
 
-/* inflate the input, maintain a sliding window, and build an index -- this
+            /* inflate the input, maintain a sliding window, and build an index -- this
               also validates the integrity of the compressed data using the check
               information at the end of the gzip or zlib stream */
             totin = totout = last = 0;
-            index = new ArrayList<Point>();               /* will be allocated by first addpoint() */
-            
+            index = new ArrayList<>();               /* will be allocated by first addpoint() */
+
             strm.avail_out = 0;
             int iteration = 0;
             do {
@@ -108,7 +106,7 @@ class ZRan {
                 if (strm.avail_in == -1) {
                     /* try one more inflate call to potentially get Z_STREAMEND */
                     if (strm.avail_out == 0) {
-                        strm.avail_out = WINSIZE;
+                        strm.avail_out = WINDOW_SIZE;
                         strm.next_out = window;
                     }
                     ret = Z.inflate(strm, ZLib.Z_NO_FLUSH);
@@ -122,7 +120,7 @@ class ZRan {
                 do {
                     /* reset sliding window if necessary */
                     if (strm.avail_out == 0) {
-                        strm.avail_out = WINSIZE;
+                        strm.avail_out = WINDOW_SIZE;
                         strm.next_out = window;
                     }
 
@@ -144,7 +142,7 @@ class ZRan {
                     }
 
                     /* if at end of block, consider adding an index entry (note that if
-                       data_type indicates an end-of-block, then all of the
+                       data_type indicates an end-of-block, then all the
                        uncompressed data from that block has been delivered, and none
                        of the compressed data after that block has been consumed,
                        except for up to seven bits) -- the totout == 0 provides an
@@ -157,13 +155,13 @@ class ZRan {
                     boolean isNotStored = 0 == (strm.data_type & 64);
                     if (isEndOfBlock && (isNotStored || windowBits < 0) &&
                             (totout == 0 || totout - last > span)) {
-                        addpoint(index, strm.data_type & 7, totin, totout, strm.avail_out, window);
+                        index.add(createPoint(strm.data_type & 7, totin, totout, strm.avail_out, window));
                         last = totout;
                     }
                     /* For raw deflate without a header, totout may jump past 0 so we always
                        add a starting checkpoint at out==0 if we haven't yet */
                     if (windowBits < 0 && index.isEmpty() && totout > 0 && totout <= span) {
-                        addpoint(index, 0, 0, 0L, WINSIZE, window);
+                        index.add(createPoint(0, 0, 0L, WINDOW_SIZE, window));
                         last = 0;
                     }
                 } while (strm.avail_in != 0);
@@ -176,9 +174,7 @@ class ZRan {
         }
     }
 
-    private static final Memory discard = new Memory(WINSIZE);
-
-    static class Extractor {
+    static class Extractor implements Closeable {
         private final byte[] bbuf = new byte[CHUNK];
         private final Memory input = new Memory(CHUNK);
         private final ByteBuffer bb = input.getByteBuffer(0, CHUNK);
@@ -197,33 +193,39 @@ class ZRan {
             strm.opaque = null;
             strm.avail_in = 0;
             strm.next_in = null;
-            int init = Z.inflateInit2_(
-                    strm, -15, Z.zlibVersion(), ZLib.STREAM_SIZE);
-            if (init != ZLib.Z_OK)
+            int init = Z.inflateInit2_(strm, -15, Z.zlibVersion(), ZLib.STREAM_SIZE);
+            if (init != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + init);
+            }
             this.stream = strm;
 
             inStream.seek(here.in - ((here.bits != 0) ? 1 : 0));
             if (here.bits != 0) {
                 int prime = inStream.read();
-                if (prime == -1)
+                if (prime == -1) {
                     throw new IOException("End of stream");
+                }
                 Z.inflatePrime(stream, here.bits, prime >>> (8 - here.bits));
             }
-            Z.inflateSetDictionary(stream, here.window, WINSIZE);
+            Z.inflateSetDictionary(stream, here.window, WINDOW_SIZE);
 
-            for (long rem = offset - here.out; rem > 0; ) {
-                rem -= extract(discard, (rem > WINSIZE) ? WINSIZE : (int) rem);
+            try (Memory discard = new Memory(WINDOW_SIZE)) {
+                for (long rem = offset - here.out; rem > 0; ) {
+                    rem -= extract(discard, (rem > WINDOW_SIZE) ? WINDOW_SIZE : (int) rem);
+                }
             }
         }
 
+        @Override
         public void close() {
             Z.inflateEnd(stream);
+            input.close();
         }
 
-public int extract(Memory buf, int len) throws IOException {
-            if (finished)
+        int extract(Memory buf, int len) throws IOException {
+            if (finished) {
                 return -1;
+            }
 
             stream.next_out = buf;
             stream.avail_out = len;
@@ -261,5 +263,4 @@ public int extract(Memory buf, int len) throws IOException {
             return index.getLast();
         }
     }
-
 }

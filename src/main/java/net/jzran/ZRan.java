@@ -82,7 +82,7 @@ class ZRan {
               also validates the integrity of the compressed data using the check
               information at the end of the gzip or zlib stream */
             totin = totout = last = 0;
-            index = new ArrayList<>();               /* will be allocated by first addpoint() */
+            index = new ArrayList<>();
 
             strm.avail_out = 0;
             int iteration = 0;

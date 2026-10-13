@@ -29,7 +29,7 @@ interface ZLib extends Library {
 
             try {
                 ZLib zLib = Native.load("z", ZLib.class);
-                LOG.info("Using native system zlib library");
+                LOG.info("Using native system zlib library " + zLib.zlibVersion());
                 return zLib;
             } catch (Throwable t) {
                 // platform-native library not found, try a bundled resource

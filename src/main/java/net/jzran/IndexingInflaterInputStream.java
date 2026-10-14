@@ -75,15 +75,14 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
         return index;
     }
 
-
     @Override
     public void seek(long offset) throws IOException {
-        // TODO
+        // TODO go to the indicated offset in the decompressed stream
     }
 
     @Override
     public long length() throws IOException {
-        // TODO
+        // TODO return the decompressed length
         return 0;
     }
 

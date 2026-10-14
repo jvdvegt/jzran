@@ -28,7 +28,7 @@ public class RandomAccessGZip {
      */
     public static DeflateIndex index(InputStream input, long span, ProgressListener<Long> listener) throws IOException {
         long[] decompressedSizeHolder = {0L};
-        List<ZRan.Point> idx = ZRan.buildGZipIndex(input, span, decompressedSizeHolder, listener);
+        List<CheckPoint> idx = ZRan.buildGZipIndex(input, span, decompressedSizeHolder, listener);
         return idx == null ? null : new DeflateIndex(idx, decompressedSizeHolder[0]);
     }
 

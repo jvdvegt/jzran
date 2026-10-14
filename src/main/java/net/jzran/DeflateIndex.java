@@ -25,7 +25,7 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
 
     private static final int BUF_SIZE = 1_048_576;
 
-    private final List<ZRan.Point> idx;
+    private final List<CheckPoint> idx;
     private final long decompressedSize;
 
     private State state;
@@ -36,7 +36,7 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
     private transient ZRan.Extractor extractor;
     private transient long pos;
 
-    DeflateIndex(List<ZRan.Point> idx, long decompressedSize) {
+    DeflateIndex(List<CheckPoint> idx, long decompressedSize) {
         this.idx = idx;
         this.decompressedSize = decompressedSize;
         this.state = State.VOID;

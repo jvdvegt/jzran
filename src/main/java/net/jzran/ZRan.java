@@ -1,11 +1,12 @@
 package net.jzran;
 
+import static net.jzran.CheckPoint.newPoint;
+
 import com.sun.jna.Memory;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,47 +22,26 @@ class ZRan {
     private static final int CHUNK = 65536;
     private static final int WINDOW_SIZE = 1 << WINDOW_BITS;
 
-    static class Point implements Serializable {
-        private final long out;
-        private final long in;
-        private final int bits;
-        private final byte[] window = new byte[WINDOW_SIZE];
-
-        private Point(long out, long in, int bits) {
-            this.out = out;
-            this.in = in;
-            this.bits = bits;
-        }
-    }
-
-    static Point createPoint(int bits, long in, long out, int left, Memory window) {
-        Point p = new Point(out, in, bits);
-        if (left != 0) {
-            System.arraycopy(window.getByteArray(0, WINDOW_SIZE), WINDOW_SIZE - left, p.window, 0, left);
-        }
-        if (left < WINDOW_SIZE) {
-            System.arraycopy(window.getByteArray(0, WINDOW_SIZE), 0, p.window, left, WINDOW_SIZE - left);
-        }
-        return p;
-    }
-
-    static List<Point> buildDeflateIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener) throws IOException {
+    static List<CheckPoint> buildDeflateIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener) throws IOException {
         return buildIndex(in, span, decompressedSize, listener, -ZRan.WINDOW_BITS);
     }
 
-    static List<Point> buildGZipIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener) throws IOException {
+    static List<CheckPoint> buildGZipIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener) throws IOException {
         return buildIndex(in, span, decompressedSize, listener, 32 + ZRan.WINDOW_BITS);         /* automatic zlib or gzip decoding */
     }
 
-    private static List<Point> buildIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener, int windowBits) throws IOException {
+    private static List<CheckPoint> buildIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener, int windowBits) throws IOException {
         int ret;
         long totin, totout;  /* our own total counters to avoid 4GB limit */
         long last;                 /* totout value of last access Point */
-        List<Point> index;       /* access points being generated */
+        List<CheckPoint> index;       /* access points being generated */
         z_stream strm = new z_stream();
         Memory input = new Memory(CHUNK);
         ByteBuffer bb = input.getByteBuffer(0, CHUNK);
         Memory window = new Memory(WINDOW_SIZE);
+        // JNA Memory is not guaranteed to be zeroed (the native heap may
+        // reuse a dirty chunk), and checkpoints copy the whole window
+        window.clear();
         byte[] buf = new byte[CHUNK];
 
         /* initialize inflate */
@@ -155,13 +135,13 @@ class ZRan {
                     boolean isNotStored = 0 == (strm.data_type & 64);
                     if (isEndOfBlock && (isNotStored || windowBits < 0) &&
                             (totout == 0 || totout - last > span)) {
-                        index.add(createPoint(strm.data_type & 7, totin, totout, strm.avail_out, window));
+                        index.add(newPoint(totin, totout, strm.data_type & 7, strm.avail_out, window));
                         last = totout;
                     }
                     /* For raw deflate without a header, totout may jump past 0 so we always
                        add a starting checkpoint at out==0 if we haven't yet */
                     if (windowBits < 0 && index.isEmpty() && totout > 0 && totout <= span) {
-                        index.add(createPoint(0, 0, 0L, WINDOW_SIZE, window));
+                        index.add(newPoint(0, 0L, 0, WINDOW_SIZE, window));
                         last = 0;
                     }
                 } while (strm.avail_in != 0);
@@ -182,10 +162,10 @@ class ZRan {
         private final SeekableInputStream inStream;
         private boolean finished = false;
 
-        Extractor(SeekableInputStream inStream, List<Point> index, long offset) throws IOException {
+        Extractor(SeekableInputStream inStream, List<CheckPoint> index, long offset) throws IOException {
             this.inStream = inStream;
 
-            Point here = findIndexPoint(index, offset);
+            CheckPoint here = findIndexPoint(index, offset);
 
             z_stream strm = new z_stream();
             strm.zalloc = null;
@@ -199,18 +179,18 @@ class ZRan {
             }
             this.stream = strm;
 
-            inStream.seek(here.in - ((here.bits != 0) ? 1 : 0));
-            if (here.bits != 0) {
+            inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
+            if (here.getBits() != 0) {
                 int prime = inStream.read();
                 if (prime == -1) {
                     throw new IOException("End of stream");
                 }
-                Z.inflatePrime(stream, here.bits, prime >>> (8 - here.bits));
+                Z.inflatePrime(stream, here.getBits(), prime >>> (8 - here.getBits()));
             }
-            Z.inflateSetDictionary(stream, here.window, WINDOW_SIZE);
+            Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
 
             try (Memory discard = new Memory(WINDOW_SIZE)) {
-                for (long rem = offset - here.out; rem > 0; ) {
+                for (long rem = offset - here.getDecompressedPosition(); rem > 0; ) {
                     rem -= extract(discard, (rem > WINDOW_SIZE) ? WINDOW_SIZE : (int) rem);
                 }
             }
@@ -255,9 +235,9 @@ class ZRan {
             return len - stream.avail_out;
         }
 
-        private static Point findIndexPoint(List<Point> index, long offset) {
+        private static CheckPoint findIndexPoint(List<CheckPoint> index, long offset) {
             for (int j = 0; j < index.size() - 1; ++j) {
-                if (index.get(j + 1).out > offset)
+                if (index.get(j + 1).getDecompressedPosition() > offset)
                     return index.get(j);
             }
             return index.getLast();

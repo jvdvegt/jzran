@@ -49,3 +49,8 @@ zran just snapshots the decoder's internal state periodically.
 I haven't yet done measurements, but essentially the `seek` method is O(span)
 (the sparser your index, the smaller it is and the slower seeks work) and after a seek,
 you read with the speed of zlib (modulo a couple of memory copies maybe).
+
+## More reading
+- https://www.zlib.net/manual.html
+- https://curiouscoding.nl/posts/gzip/
+- https://dev.to/biellls/compression-clearing-the-confusion-on-zip-gzip-zlib-and-deflate-15g1

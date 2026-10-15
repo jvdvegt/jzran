@@ -33,7 +33,7 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
     private transient Memory mem;
     private transient ByteBuffer memBuf;
     private transient SeekableInputStream inStream;
-    private transient ZRan.Extractor extractor;
+    private transient Extractor extractor;
     private transient long pos;
 
     DeflateIndex(List<CheckPoint> idx, long decompressedSize) {
@@ -82,14 +82,15 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
         }
 
         this.pos = offset;
-        this.extractor = new ZRan.Extractor(inStream, idx, offset);
+        this.extractor = new Extractor(inStream, idx, offset);
         state = State.OPEN;
     }
 
     @Override
     public int read() throws IOException {
         byte[] b = new byte[1];
-        return (read(b) > 0 ? b[0] : -1) & 0xFF;
+        int n = read(b);
+        return n > 0 ? b[0] & 0xFF : n;
     }
 
     @Override
@@ -132,6 +133,7 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
         return n;
     }
 
+    @Override
     public long length() {
         return decompressedSize;
     }

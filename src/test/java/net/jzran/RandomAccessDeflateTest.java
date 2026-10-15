@@ -1,6 +1,7 @@
 package net.jzran;
 
 import static net.jzran.TestUtil.testCorrectness;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -32,6 +33,9 @@ public class RandomAccessDeflateTest {
         DeflateIndex index = RandomAccessDeflate.index(sis, 1_048_576);
         index.open(sis);
         testCorrectness(testPair.uncompressed, index);
+
+        index.seek(testPair.uncompressed.length);
+        assertEquals(-1, index.read());
 
         ByteArrayOutputStream indexData = new ByteArrayOutputStream();
         try (ObjectOutputStream oos = new ObjectOutputStream(indexData)) {

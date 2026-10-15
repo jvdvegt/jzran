@@ -10,21 +10,21 @@ final class TestUtil {
 
     }
 
-    static void testCorrectness(byte[] expected, DeflateIndex index) throws IOException {
-        assertEquals(expected.length, index.length());
+    static void testCorrectness(byte[] expected, SeekableInputStream stream) throws IOException {
+        assertEquals(expected.length, stream.length());
 
         Random r = new Random(56738138L);
         for(int i = 0; i < 100; ++i) {
             int origin = r.nextInt(expected.length);
 
-            index.seek(origin);
+            stream.seek(origin);
 
             byte[] dest = new byte[Math.min(135763, expected.length - origin)];
 
             int rem = dest.length;
             int offset = 0;
             while(rem > 0) {
-                int n = index.read(dest, offset, rem);
+                int n = stream.read(dest, offset, rem);
                 rem -= n;
                 offset += n;
             }

@@ -4,7 +4,6 @@ import static net.jzran.CheckPoint.newPoint;
 
 import com.sun.jna.Memory;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -151,96 +150,6 @@ class ZRan {
             return index;
         } finally {
             Z.inflateEnd(strm);
-        }
-    }
-
-    static class Extractor implements Closeable {
-        private final byte[] bbuf = new byte[CHUNK];
-        private final Memory input = new Memory(CHUNK);
-        private final ByteBuffer bb = input.getByteBuffer(0, CHUNK);
-        private final z_stream stream;
-        private final SeekableInputStream inStream;
-        private boolean finished = false;
-
-        Extractor(SeekableInputStream inStream, List<CheckPoint> index, long offset) throws IOException {
-            this.inStream = inStream;
-
-            CheckPoint here = findIndexPoint(index, offset);
-
-            z_stream strm = new z_stream();
-            strm.zalloc = null;
-            strm.zfree = null;
-            strm.opaque = null;
-            strm.avail_in = 0;
-            strm.next_in = null;
-            int init = Z.inflateInit2_(strm, -15, Z.zlibVersion(), ZLib.STREAM_SIZE);
-            if (init != ZLib.Z_OK) {
-                throw new IOException("zlib error: " + init);
-            }
-            this.stream = strm;
-
-            inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
-            if (here.getBits() != 0) {
-                int prime = inStream.read();
-                if (prime == -1) {
-                    throw new IOException("End of stream");
-                }
-                Z.inflatePrime(stream, here.getBits(), prime >>> (8 - here.getBits()));
-            }
-            Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
-
-            try (Memory discard = new Memory(WINDOW_SIZE)) {
-                for (long rem = offset - here.getDecompressedPosition(); rem > 0; ) {
-                    rem -= extract(discard, (rem > WINDOW_SIZE) ? WINDOW_SIZE : (int) rem);
-                }
-            }
-        }
-
-        @Override
-        public void close() {
-            Z.inflateEnd(stream);
-            input.close();
-        }
-
-        int extract(Memory buf, int len) throws IOException {
-            if (finished) {
-                return -1;
-            }
-
-            stream.next_out = buf;
-            stream.avail_out = len;
-            if (stream.avail_in == 0) {
-                int nr = inStream.read(bbuf);
-                if (nr == -1) {
-                    finished = true;
-                    // If we've decompressed everything, return the difference as the remaining bytes
-                    return len - stream.avail_out;
-                }
-                bb.position(0);
-                bb.put(bbuf, 0, nr);
-                stream.next_in = input;
-                stream.avail_in = nr;
-            }
-            int ret = Z.inflate(stream, ZLib.Z_NO_FLUSH);       /* normal inflate */
-            if (ret == ZLib.Z_STREAM_END) {
-                finished = true;
-                return len - stream.avail_out;
-            }
-            switch (ret) {
-                case ZLib.Z_NEED_DICT:
-                case ZLib.Z_MEM_ERROR:
-                case ZLib.Z_DATA_ERROR:
-                    throw new IOException("zlib error: " + ret);
-            }
-            return len - stream.avail_out;
-        }
-
-        private static CheckPoint findIndexPoint(List<CheckPoint> index, long offset) {
-            for (int j = 0; j < index.size() - 1; ++j) {
-                if (index.get(j + 1).getDecompressedPosition() > offset)
-                    return index.get(j);
-            }
-            return index.getLast();
         }
     }
 }

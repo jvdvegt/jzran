@@ -19,12 +19,7 @@ public class ByteArraySeekableInputStream extends SeekableInputStream {
         this.buf = buf;
         this.offset = offset;
         this.len = len;
-    }
-
-    private void ensureOpen() {
-        if (isClosed) {
-            throw new IllegalStateException("Stream closed");
-        }
+        this.pos = offset;
     }
 
     @Override
@@ -33,9 +28,9 @@ public class ByteArraySeekableInputStream extends SeekableInputStream {
         if (pos == offset + len) {
             return -1;
         }
-        int oldPos = pos;
+        int result = buf[pos] & 0xFF;
         pos++;
-        return buf[oldPos] & 0xFF;
+        return result;
     }
 
     @Override
@@ -47,52 +42,55 @@ public class ByteArraySeekableInputStream extends SeekableInputStream {
     @Override
     public int read(byte[] b, int off, int readLen) throws IOException {
         ensureOpen();
-        int rem = Math.min(readLen, offset + len - pos);
-        if (rem == 0) {
+        if (readLen == 0) {
+            return 0;
+        }
+        int numBytesToCopy = Math.min(readLen, offset + len - pos);
+        if (numBytesToCopy == 0) {
             return -1;
         }
-        System.arraycopy(buf, pos, b, off, rem);
-        pos += rem;
-        return rem;
+        System.arraycopy(buf, pos, b, off, numBytesToCopy);
+        pos += numBytesToCopy;
+        return numBytesToCopy;
     }
 
     @Override
     public long skip(long n) throws IOException {
-        ensureOpen();
-        if (n < 0) {
-            return 0;
-        }
-        int rem = Math.min(
-            (int) Math.min(n, Integer.MAX_VALUE),
-            offset + len - pos);
-        pos += rem;
-        return rem;
+        int origPos = pos;
+        seek(pos + n);
+
+        return pos - origPos;
     }
 
     @Override
-    public int available() throws IOException {
+    public int available() {
         ensureOpen();
         return offset + len - pos;
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         isClosed = true;
     }
 
     @Override
-    public void seek(long seekOffset) throws IOException {
+    public void seek(long position) throws IOException {
         ensureOpen();
-        if (seekOffset > len) {
-            throw new IllegalArgumentException(
-                "Offset beyond end of buffer: " + seekOffset + " > " + len);
+        if (position < 0 || position > len) {
+            throw new IllegalArgumentException("Position outside buffer: " + position + " (length " + len + ")");
         }
         // Can't be more than Integer.MAX_VALUE because offset + len is less.
-        pos = (int) (offset + seekOffset);
+        pos = (int) (offset + position);
     }
 
     @Override
     public long length() throws IOException {
         return len;
+    }
+
+    private void ensureOpen() {
+        if (isClosed) {
+            throw new IllegalStateException("Stream closed");
+        }
     }
 }

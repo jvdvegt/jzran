@@ -8,23 +8,16 @@ import java.nio.ByteBuffer;
  */
 public class ByteBufferSeekableInputStream extends SeekableInputStream {
     private final ByteBuffer buf;
-    private long pos;
     private boolean isClosed;
 
     public ByteBufferSeekableInputStream(ByteBuffer buf) {
         this.buf = buf;
     }
 
-    private void ensureOpen() {
-        if(isClosed) {
-            throw new IllegalStateException("Stream closed");
-        }
-    }
-
     @Override
     public int read() throws IOException {
         ensureOpen();
-        return buf.remaining() > 0 ? buf.get() : -1;
+        return buf.remaining() > 0 ? (buf.get() & 0xFF) : -1;
     }
 
     @Override
@@ -38,42 +31,45 @@ public class ByteBufferSeekableInputStream extends SeekableInputStream {
         ensureOpen();
         int rem = Math.min(len, buf.remaining());
         buf.get(b, off, rem);
-        return (rem==0) ? -1 : rem;
+        return (rem == 0) ? -1 : rem;
     }
 
     @Override
     public long skip(long n) throws IOException {
-        ensureOpen();
-        if(n < 0) {
-            return 0;
-        }
-        int toSkip = Math.min(
-                (int)Math.min(n, Integer.MAX_VALUE),
-                Integer.MAX_VALUE - buf.position());
-        buf.position(buf.position() + toSkip);
-        return toSkip;
+        long origPos = buf.position();
+        seek(origPos + n);
+
+        return buf.position() - origPos;
     }
 
     @Override
-    public int available() throws IOException {
+    public int available() {
         ensureOpen();
         return buf.limit() - buf.position();
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         isClosed = true;
     }
 
-    public void seek(long offset) throws IOException {
+    @Override
+    public void seek(long position) throws IOException {
         ensureOpen();
-        if(offset > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("Offset too large: " + offset + " > " + Integer.MAX_VALUE);
+        if (position < 0 || position > length()) {
+            throw new IllegalArgumentException("Position outside buffer: " + position + " (length " + length() + ")");
         }
-        buf.position((int)offset);
+        buf.position((int)position);
     }
 
+    @Override
     public long length() throws IOException {
         return buf.limit();
+    }
+
+    private void ensureOpen() {
+        if (isClosed) {
+            throw new IllegalStateException("Stream closed");
+        }
     }
 }

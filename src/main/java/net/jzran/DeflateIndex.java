@@ -73,16 +73,21 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
         open(inStream, -1);
     }
 
-    public void seek(long offset) throws IOException {
+    @Override
+    public void seek(long position) throws IOException {
         if (state == State.VOID) {
             throw new IllegalStateException("Call open() before seeking");
         }
         if (state == State.CLOSED) {
             throw new IllegalStateException("Stream closed");
         }
+        if (position < 0 || position > decompressedSize) {
+            throw new IllegalArgumentException(
+                "Position " + position + " outside decompressed data of length " + decompressedSize);
+        }
 
-        this.pos = offset;
-        this.extractor = new Extractor(inStream, idx, offset);
+        this.pos = position;
+        this.extractor = new Extractor(inStream, idx, position);
         state = State.OPEN;
     }
 
@@ -125,8 +130,9 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
     public int read(byte[] buf, int offset, int len) throws IOException {
         ensureOpen();
         int n = extractor.extract(mem, Math.min(len, BUF_SIZE));
-        if (n < 0)
+        if (n < 0) {
             return -1;  // End of stream
+        }
         memBuf.position(0);
         memBuf.get(buf, offset, n);
         pos += n;

@@ -28,8 +28,6 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
     private static final int BUF_SIZE = 1_048_576;
 
     private final SeekableInputStream delegate;
-    private final long span;
-    private final int windowBits;
 
     /* access points being generated (by the capturing extractor) */
     private final List<CheckPoint> index = new ArrayList<>();
@@ -45,8 +43,6 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
 
     protected IndexingInflaterInputStream(SeekableInputStream delegate, long span, int windowBits) throws IOException {
         this.delegate = delegate;
-        this.span = span;
-        this.windowBits = windowBits;
         // The index is empty, so this extractor captures checkpoints while
         // decompressing, reading the delegate from the start.
         this.extractor = new Extractor(delegate, index, 0, span, windowBits);
@@ -57,7 +53,7 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
     }
 
     @Override
-    public void seek(long offset) throws IOException {
+    public void seek(long position) throws IOException {
         if (closed) {
             throw new IllegalStateException("Cannot seek on a closed stream");
         }
@@ -65,12 +61,12 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
         if (size < 0) {
             throw new IllegalStateException("Cannot seek until the index is complete; read the stream to the end first");
         }
-        if (offset < 0 || offset > size) {
-            throw new IllegalArgumentException("Offset out of range: " + offset + " (size " + size + ")");
+        if (position < 0 || position > size) {
+            throw new IllegalArgumentException("Offset out of range: " + position + " (size " + size + ")");
         }
         extractor.close();
-        extractor = new Extractor(delegate, index, offset);
-        pos = offset;
+        extractor = new Extractor(delegate, index, position);
+        pos = position;
     }
 
     @Override

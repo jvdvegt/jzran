@@ -1,8 +1,12 @@
 package net.jzran;
 
+import static net.jzran.ZRan.noopProgressListener;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+
+import net.jzran.ZRan.ProgressListener;
 
 /**
  * The entry point. Use {@link #index(java.io.InputStream,
@@ -39,6 +43,6 @@ public class RandomAccessGZip {
      *   decompressed data. A checkpoint takes about 32kb.
      */
     public static DeflateIndex index(InputStream input, long span) throws IOException {
-        return index(input, span, new NullProgressListener());
+        return index(input, span, noopProgressListener());
     }
 }

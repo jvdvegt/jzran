@@ -76,12 +76,12 @@ public class Extractor implements Closeable {
         this.span = span;
         this.windowBits = windowBits;
 
-        z_stream strm = new z_stream();
-        strm.zalloc = null;
-        strm.zfree = null;
-        strm.opaque = null;
-        strm.avail_in = 0;
-        strm.next_in = null;
+        stream = new z_stream();
+        stream.zalloc = null;
+        stream.zfree = null;
+        stream.opaque = null;
+        stream.avail_in = 0;
+        stream.next_in = null;
 
         CheckPoint here = null;
         if (capturing) {
@@ -89,7 +89,7 @@ public class Extractor implements Closeable {
                 throw new IllegalArgumentException("Offset must be 0 when building an index: " + offset);
             }
             // see https://www.zlib.net/manual.html#Advanced for window bits
-            if (Z.inflateInit2_(strm, windowBits, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
+            if (Z.inflateInit2_(stream, windowBits, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + windowBits);
             }
         } else {
@@ -98,7 +98,7 @@ public class Extractor implements Closeable {
             }
             here = findIndexPoint(index, offset);
             // all format context is in the window, so raw deflate suffices
-            if (Z.inflateInit2_(strm, -15, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
+            if (Z.inflateInit2_(stream, -15, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + -15);
             }
             inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
@@ -107,9 +107,9 @@ public class Extractor implements Closeable {
                 if (prime == -1) {
                     throw new IOException("End of stream");
                 }
-                Z.inflatePrime(strm, here.getBits(), prime >>> (8 - here.getBits()));
+                Z.inflatePrime(stream, here.getBits(), prime >>> (8 - here.getBits()));
             }
-            Z.inflateSetDictionary(strm, here.getWindow(), WINDOW_SIZE);
+            Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
             totalBytesIn = here.getCompressedPosition();
             totalBytesOut = here.getDecompressedPosition();
             last = index.getLast().getDecompressedPosition();
@@ -117,9 +117,8 @@ public class Extractor implements Closeable {
         // JNA Memory is not guaranteed to be zeroed (the native heap may
         // reuse a dirty chunk), and checkpoints copy the whole window
         window.clear();
-        strm.next_out = window;
-        strm.avail_out = WINDOW_SIZE;
-        this.stream = strm;
+        stream.next_out = window;
+        stream.avail_out = WINDOW_SIZE;
 
         if (here != null) {
             try (Memory discard = new Memory(WINDOW_SIZE)) {
@@ -191,17 +190,18 @@ public class Extractor implements Closeable {
                 windowCopied = 0;
             }
             if (stream.avail_in == 0) {
-                int nr;
+                int numBytesRead;
                 do {
-                    nr = eof ? 0 : inStream.read(bbuf);
-                } while (nr == 0 && !eof);
-                if (nr == -1) {
+                    numBytesRead = eof ? 0 : inStream.read(bbuf);
+                } while (numBytesRead == 0 && !eof);
+
+                if (numBytesRead == -1) {
                     eof = true;
-                } else if (nr > 0) {
+                } else if (numBytesRead > 0) {
                     bb.position(0);
-                    bb.put(bbuf, 0, nr);
+                    bb.put(bbuf, 0, numBytesRead);
                     stream.next_in = input;
-                    stream.avail_in = nr;
+                    stream.avail_in = numBytesRead;
                 }
             }
             int availInBefore = stream.avail_in;

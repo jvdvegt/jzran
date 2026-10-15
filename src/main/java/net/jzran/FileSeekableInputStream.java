@@ -40,10 +40,12 @@ public class FileSeekableInputStream extends SeekableInputStream {
         raf.close();
     }
 
-    public void seek(long offset) throws IOException {
-        raf.seek(offset);
+    @Override
+    public void seek(long position) throws IOException {
+        raf.seek(position);
     }
 
+    @Override
     public long length() throws IOException {
         return raf.length();
     }

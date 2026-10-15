@@ -29,6 +29,18 @@ class ZRan {
         return buildIndex(in, span, decompressedSize, listener, 32 + ZRan.WINDOW_BITS);         /* automatic zlib or gzip decoding */
     }
 
+    static ProgressListener<Long> noopProgressListener() {
+        return progress -> true;
+    }
+
+    public interface ProgressListener<T> {
+        /**
+         * @param progress the input position that was last read.
+         * @return false if you wish to cancel the thing whose progress you're looking at.
+         */
+        boolean reportProgress(T progress);
+    }
+
     private static List<CheckPoint> buildIndex(InputStream in, long span, long[] decompressedSize, ProgressListener<Long> listener, int windowBits) throws IOException {
         int ret;
         long totin, totout;  /* our own total counters to avoid 4GB limit */

@@ -108,21 +108,11 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
     }
 
     @Override
-    public long skip(long n) throws IOException {
-        if (closed) {
-            throw new IllegalStateException("Cannot skip on a closed stream");
-        }
-        if (n <= 0) {
-            return 0;
-        }
-        if (length() >= 0) {
-            long toSkip = Math.min(n, size - pos);
-            if (toSkip > 0) {
-                seek(pos + toSkip);
-            }
-            return toSkip;
-        }
-        return super.skip(n);
+    public long skip(long numBytes) throws IOException {
+        long origPos = pos;
+        seek(pos + numBytes);
+
+        return pos - origPos;
     }
 
     @Override

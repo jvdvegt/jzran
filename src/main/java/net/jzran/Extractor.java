@@ -169,7 +169,7 @@ public class Extractor implements Closeable {
             return 0;
         }
         int produced = 0;
-        while (produced < len) {
+        while (true) {
             /* copy out whatever is already produced and not yet delivered */
             int toCopy = WINDOW_SIZE - stream.avail_out - windowCopied;
             if (toCopy > len - produced) {
@@ -212,18 +212,27 @@ public class Extractor implements Closeable {
             totalBytesIn -= stream.avail_in;
             totalBytesOut -= stream.avail_out;
 
-            if (ret == ZLib.Z_STREAM_END) {
-                finished = true;
-            } else if (ret != ZLib.Z_OK && ret != ZLib.Z_BUF_ERROR) {
-                throw new IOException("zlib error: " + ret + " (" + ZLib.nameForCode(ret) + ")");
-            } else if (ret == ZLib.Z_BUF_ERROR && stream.avail_in == 0) {
-                /* no input left, and inflate can make no progress:
-                   the compressed data is truncated */
-                throw new IOException("End of stream");
-            } else if (ret == ZLib.Z_OK && stream.avail_in == availInBefore && stream.avail_out == availOutBefore) {
-                throw new IOException("No progress");
+            switch (ret) {
+                case ZLib.Z_STREAM_END:
+                    finished = true;
+                    break;
+                case ZLib.Z_BUF_ERROR:
+                    if (stream.avail_in == 0) {
+                        // no input left, and inflate can make no progress:
+                        // the compressed data is truncated
+                        throw new IOException("Premature end of stream, stream truncated?");
+                    }
+                    break;
+                case ZLib.Z_OK:
+                    if (stream.avail_in == availInBefore && stream.avail_out == availOutBefore) {
+                        throw new IOException("No progress. Bad DEFLATE stream?");
+                    }
+                    break;
+                default:
+                    throw new IOException("ZLib error: " + ret + " (" + ZLib.nameForCode(ret) + ")");
             }
-            if (capturing && ret != ZLib.Z_STREAM_END) {
+
+            if (capturing && !finished) {
                 capture();
             }
         }

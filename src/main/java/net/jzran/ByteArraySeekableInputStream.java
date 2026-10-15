@@ -19,6 +19,7 @@ public class ByteArraySeekableInputStream extends SeekableInputStream {
         this.buf = buf;
         this.offset = offset;
         this.len = len;
+        this.pos = offset;
     }
 
     private void ensureOpen() {
@@ -47,6 +48,9 @@ public class ByteArraySeekableInputStream extends SeekableInputStream {
     @Override
     public int read(byte[] b, int off, int readLen) throws IOException {
         ensureOpen();
+        if (readLen == 0) {
+            return 0;
+        }
         int rem = Math.min(readLen, offset + len - pos);
         if (rem == 0) {
             return -1;
@@ -83,9 +87,9 @@ public class ByteArraySeekableInputStream extends SeekableInputStream {
     @Override
     public void seek(long seekOffset) throws IOException {
         ensureOpen();
-        if (seekOffset > len) {
+        if (seekOffset < 0 || seekOffset > len) {
             throw new IllegalArgumentException(
-                "Offset beyond end of buffer: " + seekOffset + " > " + len);
+                "Offset outside buffer: " + seekOffset + " (length " + len + ")");
         }
         // Can't be more than Integer.MAX_VALUE because offset + len is less.
         pos = (int) (offset + seekOffset);

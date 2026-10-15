@@ -5,6 +5,7 @@ import static net.jzran.CheckPoint.newPoint;
 import com.sun.jna.Memory;
 
 import java.io.Closeable;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -160,7 +161,11 @@ class ZRan {
         private final ByteBuffer bb = input.getByteBuffer(0, CHUNK);
         private final z_stream stream;
         private final SeekableInputStream inStream;
+        private Memory discard;
+        private int readSize = 4096;
         private boolean finished = false;
+        private boolean closed = false;
+        private long inflated;
 
         Extractor(SeekableInputStream inStream, List<CheckPoint> index, long offset) throws IOException {
             this.inStream = inStream;
@@ -175,72 +180,150 @@ class ZRan {
             strm.next_in = null;
             int init = Z.inflateInit2_(strm, -15, Z.zlibVersion(), ZLib.STREAM_SIZE);
             if (init != ZLib.Z_OK) {
+                input.close();
                 throw new IOException("zlib error: " + init);
             }
             this.stream = strm;
 
-            inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
-            if (here.getBits() != 0) {
-                int prime = inStream.read();
-                if (prime == -1) {
-                    throw new IOException("End of stream");
+            try {
+                inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
+                if (here.getBits() != 0) {
+                    int prime = inStream.read();
+                    if (prime == -1) {
+                        throw new EOFException("End of stream");
+                    }
+                    Z.inflatePrime(stream, here.getBits(), prime >>> (8 - here.getBits()));
                 }
-                Z.inflatePrime(stream, here.getBits(), prime >>> (8 - here.getBits()));
-            }
-            Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
+                Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
 
-            try (Memory discard = new Memory(WINDOW_SIZE)) {
-                for (long rem = offset - here.getDecompressedPosition(); rem > 0; ) {
-                    rem -= extract(discard, (rem > WINDOW_SIZE) ? WINDOW_SIZE : (int) rem);
-                }
+                skip(offset - here.getDecompressedPosition());
+            } catch (IOException | RuntimeException e) {
+                close();
+                throw e;
             }
         }
 
         @Override
         public void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
             Z.inflateEnd(stream);
             input.close();
+            if (discard != null) {
+                discard.close();
+            }
         }
 
+        /**
+         * Decompress and discard {@code n} bytes.
+         *
+         * @throws EOFException if the stream ends first.
+         */
+        void skip(long n) throws IOException {
+            if (n <= 0) {
+                return;
+            }
+            if (discard == null) {
+                discard = new Memory(WINDOW_SIZE);
+            }
+            while (n > 0) {
+                int r = extract(discard, (int) Math.min(n, WINDOW_SIZE));
+                if (r < 0) {
+                    throw new EOFException("Compressed stream ended " + n + " bytes before the requested offset");
+                }
+                n -= r;
+            }
+        }
+
+        /** Total number of bytes decompressed by this extractor, including skipped bytes. */
+        long inflatedBytes() {
+            return inflated;
+        }
+
+        /**
+         * Decompress up to {@code len} bytes into {@code buf}.
+         *
+         * @return the number of bytes produced (at least 1 if {@code len > 0}),
+         *   or -1 at the end of the deflate stream.
+         * @throws EOFException if the compressed input ends before the deflate stream does.
+         */
         int extract(Memory buf, int len) throws IOException {
             if (finished) {
                 return -1;
             }
+            if (len <= 0) {
+                return 0;
+            }
 
             stream.next_out = buf;
             stream.avail_out = len;
-            if (stream.avail_in == 0) {
-                int nr = inStream.read(bbuf);
-                if (nr == -1) {
-                    finished = true;
-                    // If we've decompressed everything, return the difference as the remaining bytes
-                    return len - stream.avail_out;
+            while (true) {
+                if (stream.avail_in == 0) {
+                    // start with small reads so a short read after a seek does not pull a whole
+                    // chunk from the input, which matters when the input is itself decompressed
+                    int nr = inStream.read(bbuf, 0, readSize);
+                    readSize = Math.min(CHUNK, readSize * 2);
+                    if (nr == -1) {
+                        throw new EOFException("Compressed data ended before the end of the deflate stream");
+                    }
+                    if (nr == 0) {
+                        continue;
+                    }
+                    bb.position(0);
+                    bb.put(bbuf, 0, nr);
+                    stream.next_in = input;
+                    stream.avail_in = nr;
                 }
-                bb.position(0);
-                bb.put(bbuf, 0, nr);
-                stream.next_in = input;
-                stream.avail_in = nr;
+                int ret = Z.inflate(stream, ZLib.Z_NO_FLUSH);       /* normal inflate */
+                int produced = len - stream.avail_out;
+                if (ret == ZLib.Z_STREAM_END) {
+                    finished = true;
+                    inflated += produced;
+                    return produced > 0 ? produced : -1;
+                }
+                switch (ret) {
+                    case ZLib.Z_NEED_DICT:
+                    case ZLib.Z_MEM_ERROR:
+                    case ZLib.Z_DATA_ERROR:
+                    case ZLib.Z_STREAM_ERROR:
+                        throw new IOException("zlib error: " + ret + " (" + ZLib.nameForCode(ret) + ")");
+                    case ZLib.Z_BUF_ERROR:
+                        if (stream.avail_in != 0 && produced == 0) {
+                            throw new IOException("zlib made no progress (" + ZLib.nameForCode(ret) + ")");
+                        }
+                        break;
+                    default:
+                        break;
+                }
+                if (produced > 0) {
+                    inflated += produced;
+                    return produced;
+                }
+                // no output yet: inflate consumed all input, fetch more
             }
-            int ret = Z.inflate(stream, ZLib.Z_NO_FLUSH);       /* normal inflate */
-            if (ret == ZLib.Z_STREAM_END) {
-                finished = true;
-                return len - stream.avail_out;
-            }
-            switch (ret) {
-                case ZLib.Z_NEED_DICT:
-                case ZLib.Z_MEM_ERROR:
-                case ZLib.Z_DATA_ERROR:
-                    throw new IOException("zlib error: " + ret);
-            }
-            return len - stream.avail_out;
         }
 
-        private static CheckPoint findIndexPoint(List<CheckPoint> index, long offset) {
-            for (int j = 0; j < index.size() - 1; ++j) {
-                if (index.get(j + 1).getDecompressedPosition() > offset)
-                    return index.get(j);
+        /**
+         * Find the last checkpoint at or before {@code offset} (binary search; the
+         * checkpoints are ordered by decompressed position).
+         */
+        static CheckPoint findIndexPoint(List<CheckPoint> index, long offset) throws IOException {
+            if (index.isEmpty()) {
+                throw new IOException("Index contains no checkpoints");
             }
-            return index.getLast();
+            int lo = 0;
+            int hi = index.size() - 1;
+            while (lo < hi) {
+                int mid = (lo + hi + 1) >>> 1;
+                if (index.get(mid).getDecompressedPosition() <= offset) {
+                    lo = mid;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            return index.get(lo);
         }
     }
 }

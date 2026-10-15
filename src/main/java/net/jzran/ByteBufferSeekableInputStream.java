@@ -24,7 +24,7 @@ public class ByteBufferSeekableInputStream extends SeekableInputStream {
     @Override
     public int read() throws IOException {
         ensureOpen();
-        return buf.remaining() > 0 ? buf.get() : -1;
+        return buf.remaining() > 0 ? buf.get() & 0xFF : -1;
     }
 
     @Override

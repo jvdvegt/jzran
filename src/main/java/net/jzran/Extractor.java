@@ -1,7 +1,5 @@
 package net.jzran;
 
-import com.sun.jna.Memory;
-
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -10,10 +8,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import com.sun.jna.Memory;
+
 /**
  * Decompresses data from a checkpointed deflate stream, starting at a
  * given decompressed offset.
- *
+ * <p>
  * If the given index is empty, a new index is built while decompressing:
  * a checkpoint is generated every {@code span} bytes of decompressed data.
  */
@@ -50,10 +50,11 @@ public class Extractor implements Closeable {
     /**
      * Creates an extractor that resumes decompression at the given
      * decompressed offset, using the given (non-empty) index.
-     * No new checkpoints are generated.
+     * No new checkpoints are generated; checkpoints missing from the index
+     * are not regenerated.
      */
     public Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset) throws IOException {
-        this(inStream, checkpoints, offset, 0, 0, false);
+        this(inStream, toIndexMap(checkpoints), offset, 0, 0, false);
     }
 
     /**
@@ -68,13 +69,28 @@ public class Extractor implements Closeable {
      * If the index is non-empty, decompression resumes at the given
      * decompressed offset, and no new checkpoints are generated.
      */
-    public Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset, long span, int windowBits) throws IOException {
-        this(inStream, checkpoints, offset, span, windowBits, checkpoints.isEmpty());
+    public Extractor(SeekableInputStream inStream, Map<Long, CheckPoint> index, long offset, long span, int windowBits) throws IOException {
+        this(inStream, index, offset, span, windowBits, index.isEmpty());
     }
 
-    private Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset, long span, int windowBits, boolean capturing) throws IOException {
+    /**
+     * Creates an extractor for the given index.
+     * <p>
+     * If the index is empty, a new index is built while decompressing, with
+     * a checkpoint every {@code span} bytes of decompressed data. In that
+     * case {@code offset} must be 0, the stream must be positioned at the
+     * start of the compressed data, and {@code windowBits} selects the
+     * format (for example 32 + 15 for gzip, -15 for raw deflate).
+     * <p>
+     * If the index is non-empty, decompression resumes at the given
+     * decompressed offset, and if {@code capturing} is true, new checkpoints
+     * are generated every {@code span} bytes of decompressed data,
+     * continuing the series of checkpoints in the index from the checkpoint
+     * that is resumed at.
+     */
+    Extractor(SeekableInputStream inStream, Map<Long, CheckPoint> index, long offset, long span, int windowBits, boolean capturing) throws IOException {
         this.inStream = inStream;
-        this.index = toIndexMap(checkpoints);
+        this.index = new TreeMap<>(index);
         this.capturing = capturing;
         this.span = span;
         this.windowBits = windowBits;
@@ -87,23 +103,23 @@ public class Extractor implements Closeable {
         stream.next_in = null;
 
         CheckPoint here = null;
-        if (capturing) {
+        if (index.isEmpty()) {
+            if (!capturing) {
+                throw new IllegalArgumentException("Index must not be empty");
+            }
             if (offset != 0) {
-                throw new IllegalArgumentException("Offset must be 0 when building an index: " + offset);
+                throw new IllegalArgumentException("Offset must be 0 with an empty index: " + offset);
             }
             // see https://www.zlib.net/manual.html#Advanced for window bits
             if (Z.inflateInit2_(stream, windowBits, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + windowBits);
             }
         } else {
-            if (checkpoints.isEmpty()) {
-                throw new IllegalArgumentException("Index must not be empty");
-            }
-            here = findIndexPoint(offset);
             // all format context is in the window, so raw deflate suffices
             if (Z.inflateInit2_(stream, -15, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + -15);
             }
+            here = findIndexPoint(offset);
             inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
             if (here.getBits() != 0) {
                 int prime = inStream.read();
@@ -115,7 +131,10 @@ public class Extractor implements Closeable {
             Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
             totalBytesIn = here.getCompressedPosition();
             totalBytesOut = here.getDecompressedPosition();
-            last = index.lastKey();
+            // when capturing, the series of checkpoints continues from the
+            // checkpoint we resumed at, so checkpoints missing from the
+            // index are regenerated as the stream is read
+            last = capturing ? here.getDecompressedPosition() : this.index.lastKey();
         }
         // JNA Memory is not guaranteed to be zeroed (the native heap may
         // reuse a dirty chunk), and checkpoints copy the whole window
@@ -163,6 +182,10 @@ public class Extractor implements Closeable {
      */
     public List<CheckPoint> getCheckpoints() {
         return new ArrayList<>(index.values());
+    }
+
+    public Map<Long, CheckPoint> getIndex() {
+        return index;
     }
 
     /**
@@ -275,7 +298,7 @@ public class Extractor implements Closeable {
         }
     }
 
-    private static TreeMap<Long, CheckPoint> toIndexMap(List<CheckPoint> points) {
+    static TreeMap<Long, CheckPoint> toIndexMap(List<CheckPoint> points) {
         TreeMap<Long, CheckPoint> map = new TreeMap<>();
         for (CheckPoint p : points) {
             map.put(p.getDecompressedPosition(), p);

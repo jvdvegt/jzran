@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -94,6 +95,41 @@ class IndexingInflaterInputStreamTest {
 
             assertThrows(IllegalArgumentException.class, () -> input.seek(-1));
             assertThrows(IllegalArgumentException.class, () -> input.seek(input.length() + 1));
+        }
+    }
+
+    @Test
+    void testSeekContinuesCapturingDeflate() throws Exception {
+        var testPair = new RandomAccessDeflateTest.TestPair();
+
+        long[] decompressedSize = new long[1];
+        List<CheckPoint> expected = ZRan.buildDeflateIndex(
+            new ByteArrayInputStream(testPair.compressed), 1_048_576, decompressedSize, p -> true);
+
+        try (IndexingInflaterInputStream input = IndexingInflaterInputStream.forDeflate(
+                new ByteArraySeekableInputStream(testPair.compressed))) {
+            assertArrayEquals(testPair.uncompressed, input.readAllBytes());
+            assertEquals(testPair.uncompressed.length, input.length());
+
+            List<CheckPoint> built = input.getIndex();
+            assertEquals(expected.size(), built.size());
+
+            // After a seek the extractor keeps capturing: with the same span
+            // it continues the existing checkpoint series, so the index keeps
+            // the same checkpoints.
+            int offset = testPair.uncompressed.length / 2;
+            input.seek(offset);
+            assertArrayEquals(Arrays.copyOfRange(testPair.uncompressed, offset, testPair.uncompressed.length),
+                input.readAllBytes());
+
+            List<CheckPoint> after = input.getIndex();
+            assertEquals(built.size(), after.size());
+            for (int i = 0; i < built.size(); i++) {
+                assertSameCheckpoint(built.get(i), after.get(i), i);
+            }
+
+            // And random access must still work after the seeking.
+            testCorrectness(testPair.uncompressed, input);
         }
     }
 

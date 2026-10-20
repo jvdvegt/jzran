@@ -2,8 +2,9 @@ package net.jzran;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import com.sun.jna.Memory;
 
@@ -14,11 +15,12 @@ import com.sun.jna.Memory;
  * Once the stream has been read to the end, the index is complete and
  * {@link #seek(long)} can be used to reposition the stream to any offset in
  * the decompressed data.
- *
+ * <p>
  * All reading is delegated to an {@link Extractor}: initially one that builds
  * the index while decompressing, and after a {@link #seek(long)} one that
- * resumes from the nearest checkpoint.
- *
+ * resumes from the nearest checkpoint, continuing to generate checkpoints
+ * (and regenerating any that are missing from the index).
+ * <p>
  * The delegate must be positioned at the start of the compressed data.
  */
 public class IndexingInflaterInputStream extends SeekableInputStream {
@@ -28,6 +30,8 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
     private static final int BUF_SIZE = 1_048_576;
 
     private final SeekableInputStream delegate;
+    private final long span;
+    private final int windowBits;
 
     /* Buffer used to read data via the extractor */
     private final Memory mem = new Memory(BUF_SIZE);
@@ -40,9 +44,11 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
 
     protected IndexingInflaterInputStream(SeekableInputStream delegate, long span, int windowBits) throws IOException {
         this.delegate = delegate;
+        this.span = span;
+        this.windowBits = windowBits;
         // The index is empty, so this extractor captures checkpoints while
         // decompressing, reading the delegate from the start.
-        this.extractor = new Extractor(delegate, new ArrayList<>(), 0, span, windowBits);
+        this.extractor = new Extractor(delegate, new TreeMap<>(), 0, span, windowBits);
     }
 
     public List<CheckPoint> getIndex() {
@@ -61,9 +67,12 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
         if (position < 0 || position > size) {
             throw new IllegalArgumentException("Offset out of range: " + position + " (size " + size + ")");
         }
-        List<CheckPoint> index = extractor.getCheckpoints();
+        Map<Long, CheckPoint> index = extractor.getIndex();
         extractor.close();
-        extractor = new Extractor(delegate, index, position);
+        // Resume from the nearest checkpoint, continuing to capture
+        // checkpoints (and regenerating any that are missing from the
+        // index) while decompressing.
+        extractor = new Extractor(delegate, index, position, span, windowBits, true);
         pos = position;
     }
 

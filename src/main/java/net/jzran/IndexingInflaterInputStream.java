@@ -29,9 +29,6 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
 
     private final SeekableInputStream delegate;
 
-    /* access points being generated (by the capturing extractor) */
-    private final List<CheckPoint> index = new ArrayList<>();
-
     /* Buffer used to read data via the extractor */
     private final Memory mem = new Memory(BUF_SIZE);
     private final ByteBuffer memBuf = mem.getByteBuffer(0, BUF_SIZE);
@@ -45,11 +42,11 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
         this.delegate = delegate;
         // The index is empty, so this extractor captures checkpoints while
         // decompressing, reading the delegate from the start.
-        this.extractor = new Extractor(delegate, index, 0, span, windowBits);
+        this.extractor = new Extractor(delegate, new ArrayList<>(), 0, span, windowBits);
     }
 
     public List<CheckPoint> getIndex() {
-        return index;
+        return extractor.getCheckpoints();
     }
 
     @Override
@@ -64,6 +61,7 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
         if (position < 0 || position > size) {
             throw new IllegalArgumentException("Offset out of range: " + position + " (size " + size + ")");
         }
+        List<CheckPoint> index = extractor.getCheckpoints();
         extractor.close();
         extractor = new Extractor(delegate, index, position);
         pos = position;

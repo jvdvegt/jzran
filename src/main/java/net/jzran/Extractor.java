@@ -5,7 +5,10 @@ import com.sun.jna.Memory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Decompresses data from a checkpointed deflate stream, starting at a
@@ -32,7 +35,7 @@ public class Extractor implements Closeable {
 
     private final z_stream stream;
     private final SeekableInputStream inStream;
-    private final List<CheckPoint> index;
+    private final TreeMap<Long, CheckPoint> index;
     private final boolean capturing;
     private final long span;
     private final int windowBits;
@@ -49,8 +52,8 @@ public class Extractor implements Closeable {
      * decompressed offset, using the given (non-empty) index.
      * No new checkpoints are generated.
      */
-    public Extractor(SeekableInputStream inStream, List<CheckPoint> index, long offset) throws IOException {
-        this(inStream, index, offset, 0, 0, false);
+    public Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset) throws IOException {
+        this(inStream, checkpoints, offset, 0, 0, false);
     }
 
     /**
@@ -65,13 +68,13 @@ public class Extractor implements Closeable {
      * If the index is non-empty, decompression resumes at the given
      * decompressed offset, and no new checkpoints are generated.
      */
-    public Extractor(SeekableInputStream inStream, List<CheckPoint> index, long offset, long span, int windowBits) throws IOException {
-        this(inStream, index, offset, span, windowBits, index.isEmpty());
+    public Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset, long span, int windowBits) throws IOException {
+        this(inStream, checkpoints, offset, span, windowBits, checkpoints.isEmpty());
     }
 
-    private Extractor(SeekableInputStream inStream, List<CheckPoint> index, long offset, long span, int windowBits, boolean capturing) throws IOException {
+    private Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset, long span, int windowBits, boolean capturing) throws IOException {
         this.inStream = inStream;
-        this.index = index;
+        this.index = toIndexMap(checkpoints);
         this.capturing = capturing;
         this.span = span;
         this.windowBits = windowBits;
@@ -93,10 +96,10 @@ public class Extractor implements Closeable {
                 throw new IOException("zlib error: " + windowBits);
             }
         } else {
-            if (index.isEmpty()) {
+            if (checkpoints.isEmpty()) {
                 throw new IllegalArgumentException("Index must not be empty");
             }
-            here = findIndexPoint(index, offset);
+            here = findIndexPoint(offset);
             // all format context is in the window, so raw deflate suffices
             if (Z.inflateInit2_(stream, -15, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + -15);
@@ -112,7 +115,7 @@ public class Extractor implements Closeable {
             Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
             totalBytesIn = here.getCompressedPosition();
             totalBytesOut = here.getDecompressedPosition();
-            last = index.getLast().getDecompressedPosition();
+            last = index.lastKey();
         }
         // JNA Memory is not guaranteed to be zeroed (the native heap may
         // reuse a dirty chunk), and checkpoints copy the whole window
@@ -153,6 +156,13 @@ public class Extractor implements Closeable {
      */
     public boolean isFinished() {
         return finished;
+    }
+
+    /**
+     * @return the checkpoints in this index, ordered by decompressed position
+     */
+    public List<CheckPoint> getCheckpoints() {
+        return new ArrayList<>(index.values());
     }
 
     /**
@@ -254,22 +264,29 @@ public class Extractor implements Closeable {
         boolean isNotStored = 0 == (stream.data_type & 64);
         if (isEndOfBlock && (isNotStored || windowBits < 0) &&
             (totalBytesOut == 0 || totalBytesOut - last > span)) {
-            index.add(CheckPoint.newPoint(totalBytesIn, totalBytesOut, stream.data_type & 7, stream.avail_out, window));
+            index.put(totalBytesOut, CheckPoint.newPoint(totalBytesIn, totalBytesOut, stream.data_type & 7, stream.avail_out, window));
             last = totalBytesOut;
         }
         /* For raw deflate without a header, totalBytesOut may jump past 0
            so we always add a starting checkpoint at out==0 if we haven't yet */
         if (windowBits < 0 && index.isEmpty() && totalBytesOut > 0 && totalBytesOut <= span) {
-            index.add(CheckPoint.newPoint(0, 0L, 0, WINDOW_SIZE, window));
+            index.put(0L, CheckPoint.newPoint(0, 0L, 0, WINDOW_SIZE, window));
             last = 0;
         }
     }
 
-    private static CheckPoint findIndexPoint(List<CheckPoint> index, long offset) {
-        for (int j = 0; j < index.size() - 1; ++j) {
-            if (index.get(j + 1).getDecompressedPosition() > offset)
-                return index.get(j);
+    private static TreeMap<Long, CheckPoint> toIndexMap(List<CheckPoint> points) {
+        TreeMap<Long, CheckPoint> map = new TreeMap<>();
+        for (CheckPoint p : points) {
+            map.put(p.getDecompressedPosition(), p);
         }
-        return index.getLast();
+        return map;
+    }
+
+    /* the access point to resume from is the one with the greatest
+       decompressed position not exceeding the requested offset */
+    private CheckPoint findIndexPoint(long offset) {
+        Map.Entry<Long, CheckPoint> entry = index.floorEntry(offset);
+        return (entry != null ? entry : index.firstEntry()).getValue();
     }
 }

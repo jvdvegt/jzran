@@ -67,8 +67,8 @@ class ExtractorTest {
         List<CheckPoint> reference = ZRan.buildDeflateIndex(new ByteArrayInputStream(pair.compressed), SPAN, refSize, p -> true);
         assertEquals(len, refSize[0]);
 
-        List<CheckPoint> built = new ArrayList<>();
-        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), built, 0, SPAN, -15)) {
+        List<CheckPoint> built;
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), new ArrayList<>(), 0, SPAN, -15)) {
             assertFalse(extractor.isFinished(), "fresh capturing extractor should not be finished");
 
             try (Memory mem = new Memory(16)) {
@@ -83,6 +83,8 @@ class ExtractorTest {
              try (Memory mem = new Memory(16)) {
                 assertEquals(-1, extractor.extract(mem, 16), "extract after end should return -1");
             }
+
+            built = extractor.getCheckpoints();
         }
         assertTrue(built.size() > 1, "expected multiple checkpoints");
         assertSameIndex(reference, built);
@@ -97,11 +99,12 @@ class ExtractorTest {
         List<CheckPoint> reference = ZRan.buildGZipIndex(new ByteArrayInputStream(pair.compressed), SPAN, refSize, p -> true);
         assertEquals(len, refSize[0]);
 
-        List<CheckPoint> built = new ArrayList<>();
-        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), built, 0, SPAN, 32 + 15)) {
+        List<CheckPoint> built;
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), new ArrayList<>(), 0, SPAN, 32 + 15)) {
             assertArrayEquals(pair.uncompressed, readAll(extractor));
             assertTrue(extractor.isFinished());
             assertEquals(len, extractor.totalBytesOut());
+            built = extractor.getCheckpoints();
         }
         assertTrue(built.size() > 1, "expected multiple checkpoints");
         assertSameIndex(reference, built);
@@ -111,14 +114,16 @@ class ExtractorTest {
     void testCapturingSpanAffectsCheckpointDensity() throws Exception {
         RandomAccessDeflateTest.TestPair pair = new RandomAccessDeflateTest.TestPair();
 
-        List<CheckPoint> fine = new ArrayList<>();
-        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), fine, 0, 65536, -15)) {
+        List<CheckPoint> fine;
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), new ArrayList<>(), 0, 65536, -15)) {
             readAll(extractor);
+            fine = extractor.getCheckpoints();
         }
 
-        List<CheckPoint> coarse = new ArrayList<>();
-        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), coarse, 0, 2 * 65536, -15)) {
+        List<CheckPoint> coarse;
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), new ArrayList<>(), 0, 2 * 65536, -15)) {
             readAll(extractor);
+            coarse = extractor.getCheckpoints();
         }
 
         assertTrue(fine.size() > coarse.size(),
@@ -134,9 +139,8 @@ class ExtractorTest {
         int len = pair.uncompressed.length;
         int target = len / 5;
 
-        List<CheckPoint> built = new ArrayList<>();
         int bufferSize = 65536;
-        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), built, 0, SPAN, -15);
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), new ArrayList<>(), 0, SPAN, -15);
              Memory mem = new Memory(bufferSize)) {
                 int delivered = 0;
                 while (delivered < target) {

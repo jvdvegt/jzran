@@ -25,6 +25,9 @@ import com.sun.jna.Memory;
  */
 public class IndexingInflaterInputStream extends SeekableInputStream {
     private static final int WINDOW_BITS = 15;
+    public static final int DEFLATE_WINDOW_BITS = -WINDOW_BITS;
+    public static final int GZIP_WINDOW_BITS = 32 + WINDOW_BITS;
+
     static final int WINDOW_SIZE = 1 << WINDOW_BITS;
     public static final int DEFAULT_SPAN = 1_048_576;
     private static final int BUF_SIZE = 1_048_576;
@@ -39,13 +42,21 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
 
     private Extractor extractor;
     private long pos;
-    private long size = -1;
+    private long size;
     private boolean closed = false;
 
     protected IndexingInflaterInputStream(SeekableInputStream delegate, long span, int windowBits) throws IOException {
+        this(delegate, span, windowBits, -1);
+    }
+
+    /* If decompressedSize is non-negative, the total size of the decompressed
+       data is known up front, so length() and available() report it before
+       the stream has been read to the end. */
+    protected IndexingInflaterInputStream(SeekableInputStream delegate, long span, int windowBits, long decompressedSize) throws IOException {
         this.delegate = delegate;
         this.span = span;
         this.windowBits = windowBits;
+        this.size = decompressedSize;
         // The index is empty, so this extractor captures checkpoints while
         // decompressing, reading the delegate from the start.
         this.extractor = new Extractor(delegate, new TreeMap<>(), 0, span, windowBits);
@@ -141,10 +152,18 @@ public class IndexingInflaterInputStream extends SeekableInputStream {
     }
 
     public static IndexingInflaterInputStream forGZip(SeekableInputStream delegate) throws IOException {
-        return new IndexingInflaterInputStream(delegate, DEFAULT_SPAN, 32 + WINDOW_BITS);
+        return new IndexingInflaterInputStream(delegate, DEFAULT_SPAN, GZIP_WINDOW_BITS);
+    }
+
+    public static IndexingInflaterInputStream forGZip(SeekableInputStream delegate, long decompressedSize) throws IOException {
+        return new IndexingInflaterInputStream(delegate, DEFAULT_SPAN, GZIP_WINDOW_BITS, decompressedSize);
     }
 
     public static IndexingInflaterInputStream forDeflate(SeekableInputStream delegate) throws IOException {
-        return new IndexingInflaterInputStream(delegate, DEFAULT_SPAN, -WINDOW_BITS);
+        return new IndexingInflaterInputStream(delegate, DEFAULT_SPAN, DEFLATE_WINDOW_BITS);
+    }
+
+    public static IndexingInflaterInputStream forDeflate(SeekableInputStream delegate, long decompressedSize) throws IOException {
+        return new IndexingInflaterInputStream(delegate, DEFAULT_SPAN, DEFLATE_WINDOW_BITS, decompressedSize);
     }
 }

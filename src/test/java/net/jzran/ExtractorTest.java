@@ -150,6 +150,80 @@ class ExtractorTest {
     }
 
     @Test
+    void testResumeFallsBackToStartDeflate() throws Exception {
+        RandomAccessDeflateTest.TestPair pair = new RandomAccessDeflateTest.TestPair();
+        int len = pair.uncompressed.length;
+        long[] size = new long[1];
+        List<CheckPoint> index = ZRan.buildDeflateIndex(new ByteArrayInputStream(pair.compressed), SPAN, size, p -> true);
+        assertEquals(len, size[0]);
+        assertTrue(index.size() > 2, "expected several checkpoints");
+
+        // Drop the first checkpoints, leaving an index that does not cover
+        // the offset we seek to.
+        int keepFrom = 2;
+        long offset = index.get(keepFrom).getDecompressedPosition() / 2;
+        List<CheckPoint> pruned = new ArrayList<>(index.subList(keepFrom, index.size()));
+        assertTrue(offset < pruned.get(0).getDecompressedPosition(), "offset must be before the first remaining checkpoint");
+
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), toIndexMap(pruned), offset, SPAN, -15, true)) {
+            assertArrayEquals(Arrays.copyOfRange(pair.uncompressed, (int) offset, len), readAll(extractor));
+            assertTrue(extractor.isFinished());
+            assertEquals(len, extractor.totalBytesOut());
+
+            // No checkpoint covered the offset, so the extractor started
+            // over from the beginning of the stream; the missing
+            // checkpoints were regenerated at their original positions.
+            assertSameIndexIgnoringStartWindow(index, extractor.getCheckpoints());
+        }
+    }
+
+    @Test
+    void testResumeFallsBackToStartGZip() throws Exception {
+        RandomAccessGZipTest.TestPair pair = new RandomAccessGZipTest.TestPair();
+        int len = pair.uncompressed.length;
+        long[] size = new long[1];
+        List<CheckPoint> index = ZRan.buildGZipIndex(new ByteArrayInputStream(pair.compressed), SPAN, size, p -> true);
+        assertEquals(len, size[0]);
+        assertTrue(index.size() > 2, "expected several checkpoints");
+
+        int keepFrom = 2;
+        long offset = index.get(keepFrom).getDecompressedPosition() / 2;
+        List<CheckPoint> pruned = new ArrayList<>(index.subList(keepFrom, index.size()));
+        assertTrue(offset < pruned.get(0).getDecompressedPosition(), "offset must be before the first remaining checkpoint");
+
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), toIndexMap(pruned), offset, SPAN, 32 + 15, true)) {
+            assertArrayEquals(Arrays.copyOfRange(pair.uncompressed, (int) offset, len), readAll(extractor));
+            assertTrue(extractor.isFinished());
+            assertEquals(len, extractor.totalBytesOut());
+
+            assertSameIndex(index, extractor.getCheckpoints());
+        }
+    }
+
+    @Test
+    void testResumeFallsBackToStartWithoutCapturing() throws Exception {
+        RandomAccessDeflateTest.TestPair pair = new RandomAccessDeflateTest.TestPair();
+        int len = pair.uncompressed.length;
+        long[] size = new long[1];
+        List<CheckPoint> index = ZRan.buildDeflateIndex(new ByteArrayInputStream(pair.compressed), SPAN, size, p -> true);
+        assertEquals(len, size[0]);
+        assertTrue(index.size() > 2, "expected several checkpoints");
+
+        int keepFrom = 2;
+        long offset = index.get(keepFrom).getDecompressedPosition() / 2;
+        List<CheckPoint> pruned = new ArrayList<>(index.subList(keepFrom, index.size()));
+
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), toIndexMap(pruned), offset, SPAN, -15)) {
+            assertArrayEquals(Arrays.copyOfRange(pair.uncompressed, (int) offset, len), readAll(extractor));
+            assertTrue(extractor.isFinished());
+            assertEquals(len, extractor.totalBytesOut());
+
+            // Not capturing, so the index is left untouched.
+            assertSameIndex(pruned, extractor.getCheckpoints());
+        }
+    }
+
+    @Test
     void testCapturingBuildsIndexMatchingZranDeflate() throws Exception {
         RandomAccessDeflateTest.TestPair pair = new RandomAccessDeflateTest.TestPair();
         int len = pair.uncompressed.length;
@@ -171,14 +245,14 @@ class ExtractorTest {
             assertTrue(extractor.isFinished());
             assertEquals(len, extractor.totalBytesOut());
 
-             try (Memory mem = new Memory(16)) {
-                assertEquals(-1, extractor.extract(mem, 16), "extract after end should return -1");
-            }
+              try (Memory mem = new Memory(16)) {
+                 assertEquals(-1, extractor.extract(mem, 16), "extract after end should return -1");
+             }
 
-            built = extractor.getCheckpoints();
+             built = extractor.getCheckpoints();
         }
         assertTrue(built.size() > 1, "expected multiple checkpoints");
-        assertSameIndex(reference, built);
+        assertSameIndexIgnoringStartWindow(reference, built);
     }
 
     @Test
@@ -272,6 +346,19 @@ class ExtractorTest {
             () -> new Extractor(new ByteArraySeekableInputStream(pair.compressed), index, len + 1));
     }
 
+    @Test
+    void testResumeBeforeFirstIndexPointIsRejected() throws Exception {
+        RandomAccessDeflateTest.TestPair pair = new RandomAccessDeflateTest.TestPair();
+        long[] size = new long[1];
+        List<CheckPoint> index = ZRan.buildDeflateIndex(new ByteArrayInputStream(pair.compressed), SPAN, size, p -> true);
+        assertTrue(index.size() > 1, "expected multiple checkpoints");
+
+        // Drop the first checkpoint so the index no longer covers offset 0.
+        List<CheckPoint> pruned = new ArrayList<>(index.subList(1, index.size()));
+        assertThrows(IllegalArgumentException.class,
+            () -> new Extractor(new ByteArraySeekableInputStream(pair.compressed), pruned, 0));
+    }
+
     private static byte[] readAll(Extractor extractor) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         int bufferSize = 65536;
@@ -292,6 +379,17 @@ class ExtractorTest {
         }
     }
 
+    /* Like assertSameIndex, but ignores the position-0 window: for raw
+       deflate that checkpoint is synthesized with an all-zero window, whose
+       content is never referenced, rather than the reference's first 32K. */
+    private static void assertSameIndexIgnoringStartWindow(List<CheckPoint> expected, List<CheckPoint> actual) {
+        assertEquals(expected.size(), actual.size(), "index size");
+        for (int i = 0; i < expected.size(); i++) {
+            assertPointsEqual(expected.get(i), actual.get(i),
+                expected.get(i).getDecompressedPosition() == 0);
+        }
+    }
+
     private static void assertIndexContains(List<CheckPoint> expected, List<CheckPoint> actual) {
         long prev = -1;
         int matched = 0;
@@ -307,9 +405,15 @@ class ExtractorTest {
     }
 
     private static void assertPointsEqual(CheckPoint expected, CheckPoint actual) {
+        assertPointsEqual(expected, actual, false);
+    }
+
+    private static void assertPointsEqual(CheckPoint expected, CheckPoint actual, boolean ignoreWindow) {
         assertEquals(expected.getDecompressedPosition(), actual.getDecompressedPosition(), "point decompressed position");
         assertEquals(expected.getCompressedPosition(), actual.getCompressedPosition(), "point compressed position");
         assertEquals(expected.getBits(), actual.getBits(), "point bits");
-        assertArrayEquals(expected.getWindow(), actual.getWindow(), "point window");
+        if (!ignoreWindow) {
+            assertArrayEquals(expected.getWindow(), actual.getWindow(), "point window");
+        }
     }
 }

@@ -37,7 +37,9 @@ class IndexingInflaterInputStreamTest {
         assertTrue(actual.size() > 1);
         assertEquals(expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
-            assertSameCheckpoint(expected.get(i), actual.get(i), i);
+            // the position-0 window is synthesized (all zeros) rather than
+            // the reference's first 32K, so ignore just that window
+            assertSameCheckpoint(expected.get(i), actual.get(i), i, expected.get(i).getDecompressedPosition() == 0);
         }
     }
 
@@ -63,7 +65,9 @@ class IndexingInflaterInputStreamTest {
             List<CheckPoint> actual = input.getIndex();
             assertEquals(expected.size(), actual.size());
             for (int i = 0; i < expected.size(); i++) {
-                assertSameCheckpoint(expected.get(i), actual.get(i), i);
+                // the position-0 window is synthesized (all zeros) rather
+                // than the reference's first 32K, so ignore just that window
+                assertSameCheckpoint(expected.get(i), actual.get(i), i, expected.get(i).getDecompressedPosition() == 0);
             }
 
             // And random access must still work after the index was built.
@@ -163,10 +167,16 @@ class IndexingInflaterInputStreamTest {
     }
 
     private static void assertSameCheckpoint(CheckPoint exp, CheckPoint act, int i) {
+        assertSameCheckpoint(exp, act, i, false);
+    }
+
+    private static void assertSameCheckpoint(CheckPoint exp, CheckPoint act, int i, boolean ignoreWindow) {
         assertEquals(exp.getDecompressedPosition(), act.getDecompressedPosition(), "point " + i + " DecompressedPosition");
         assertEquals(exp.getCompressedPosition(), act.getCompressedPosition(), "point " + i + " CompressedPosition");
         assertEquals(exp.getBits(), act.getBits(), "point " + i + " bits");
-        assertArrayEquals(exp.getWindow(), act.getWindow(), "point " + i + " window");
+        if (!ignoreWindow) {
+            assertArrayEquals(exp.getWindow(), act.getWindow(), "point " + i + " window");
+        }
     }
 
     private static byte[] readAllIrregular(IndexingInflaterInputStream input) throws IOException {

@@ -52,7 +52,12 @@ public class Extractor implements Closeable {
      * decompressed offset, using the given (non-empty) index.
      * No new checkpoints are generated; checkpoints missing from the index
      * are not regenerated.
+     * <p>
+     * If there is no checkpoint at or before {@code offset}, an
+     * {@link IllegalArgumentException} is thrown, since the stream format is
+     * not known and decompression cannot start over from the beginning.
      */
+    @Deprecated
     public Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset) throws IOException {
         this(inStream, toIndexMap(checkpoints), offset, 0, 0, false);
     }
@@ -67,7 +72,9 @@ public class Extractor implements Closeable {
      * format (for example 32 + 15 for gzip, -15 for raw deflate).
      * <p>
      * If the index is non-empty, decompression resumes at the given
-     * decompressed offset, and no new checkpoints are generated.
+     * decompressed offset, and no new checkpoints are generated. If there is
+     * no checkpoint at or before {@code offset}, decompression starts over
+     * from the beginning of the stream instead and discards up to the offset.
      */
     public Extractor(SeekableInputStream inStream, Map<Long, CheckPoint> index, long offset, long span, int windowBits) throws IOException {
         this(inStream, index, offset, span, windowBits, index.isEmpty());
@@ -86,7 +93,10 @@ public class Extractor implements Closeable {
      * decompressed offset, and if {@code capturing} is true, new checkpoints
      * are generated every {@code span} bytes of decompressed data,
      * continuing the series of checkpoints in the index from the checkpoint
-     * that is resumed at.
+     * that is resumed at. If there is no checkpoint at or before
+     * {@code offset}, decompression starts over from the beginning of the
+     * stream instead and discards up to the offset; if {@code capturing} is
+     * true, the checkpoints generated along the way are added to the index.
      */
     Extractor(SeekableInputStream inStream, Map<Long, CheckPoint> index, long offset, long span, int windowBits, boolean capturing) throws IOException {
         this.inStream = inStream;
@@ -114,27 +124,55 @@ public class Extractor implements Closeable {
             if (Z.inflateInit2_(stream, windowBits, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
                 throw new IOException("zlib error: " + windowBits);
             }
+            if (windowBits < 0) {
+                this.index.put(0L, startPosition());
+            }
         } else {
-            // all format context is in the window, so raw deflate suffices
-            if (Z.inflateInit2_(stream, -15, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
-                throw new IOException("zlib error: " + -15);
-            }
             here = findIndexPoint(offset);
-            inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
-            if (here.getBits() != 0) {
-                int prime = inStream.read();
-                if (prime == -1) {
-                    throw new IOException("End of stream");
+            if (here == null && windowBits < 0) {
+                // raw deflate starts at byte 0 of the input, so the
+                // position-0 checkpoint is fully determined and can be
+                // synthesized; it is only kept if capturing
+                here = startPosition();
+                if (capturing) {
+                    this.index.put(0L, here);
                 }
-                Z.inflatePrime(stream, here.getBits(), prime >>> (8 - here.getBits()));
             }
-            Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
-            totalBytesIn = here.getCompressedPosition();
-            totalBytesOut = here.getDecompressedPosition();
-            // when capturing, the series of checkpoints continues from the
-            // checkpoint we resumed at, so checkpoints missing from the
-            // index are regenerated as the stream is read
-            last = capturing ? here.getDecompressedPosition() : this.index.lastKey();
+            if (here == null) {
+                // no checkpoint at or before the offset
+                if (windowBits == 0) {
+                    throw new IllegalArgumentException("Offset " + offset + " is before the first index point " + this.index.firstKey()
+                            + ", and the stream format is not known, so decompression cannot start over from the beginning");
+                }
+                // gzip or zlib: start over from the beginning of the stream,
+                // decoding the header, and discard up to the offset
+                // see https://www.zlib.net/manual.html#Advanced for window bits
+                if (Z.inflateInit2_(stream, windowBits, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
+                    throw new IOException("zlib error: " + windowBits);
+                }
+                inStream.seek(0);
+                last = capturing ? 0 : this.index.lastKey();
+            } else {
+                // all format context is in the window, so raw deflate suffices
+                if (Z.inflateInit2_(stream, -15, Z.zlibVersion(), ZLib.STREAM_SIZE) != ZLib.Z_OK) {
+                    throw new IOException("zlib error: " + -15);
+                }
+                inStream.seek(here.getCompressedPosition() - ((here.getBits() != 0) ? 1 : 0));
+                if (here.getBits() != 0) {
+                    int prime = inStream.read();
+                    if (prime == -1) {
+                        throw new IOException("End of stream");
+                    }
+                    Z.inflatePrime(stream, here.getBits(), prime >>> (8 - here.getBits()));
+                }
+                Z.inflateSetDictionary(stream, here.getWindow(), WINDOW_SIZE);
+                totalBytesIn = here.getCompressedPosition();
+                totalBytesOut = here.getDecompressedPosition();
+                // when capturing, the series of checkpoints continues from the
+                // checkpoint we resumed at, so checkpoints missing from the
+                // index are regenerated as the stream is read
+                last = capturing ? here.getDecompressedPosition() : this.index.lastKey();
+            }
         }
         // JNA Memory is not guaranteed to be zeroed (the native heap may
         // reuse a dirty chunk), and checkpoints copy the whole window
@@ -142,9 +180,10 @@ public class Extractor implements Closeable {
         stream.next_out = window;
         stream.avail_out = WINDOW_SIZE;
 
-        if (here != null) {
+        long from = (here != null) ? here.getDecompressedPosition() : 0;
+        if (offset > from) {
             try (Memory discard = new Memory(WINDOW_SIZE)) {
-                for (long rem = offset - here.getDecompressedPosition(); rem > 0; ) {
+                for (long rem = offset - from; rem > 0; ) {
                     int n = extract(discard, (rem > WINDOW_SIZE) ? WINDOW_SIZE : (int) rem);
                     if (n < 0) {
                         throw new IOException("Offset " + offset + " is beyond the end of the stream");
@@ -290,12 +329,6 @@ public class Extractor implements Closeable {
             index.put(totalBytesOut, CheckPoint.newPoint(totalBytesIn, totalBytesOut, stream.data_type & 7, stream.avail_out, window));
             last = totalBytesOut;
         }
-        /* For raw deflate without a header, totalBytesOut may jump past 0
-           so we always add a starting checkpoint at out==0 if we haven't yet */
-        if (windowBits < 0 && index.isEmpty() && totalBytesOut > 0 && totalBytesOut <= span) {
-            index.put(0L, CheckPoint.newPoint(0, 0L, 0, WINDOW_SIZE, window));
-            last = 0;
-        }
     }
 
     static TreeMap<Long, CheckPoint> toIndexMap(List<CheckPoint> points) {
@@ -306,10 +339,22 @@ public class Extractor implements Closeable {
         return map;
     }
 
+    /* A raw deflate stream starts at byte 0 of the input, so the position-0
+       checkpoint is fully determined: compressed position 0, no primed bits,
+       and a window that is never referenced, since a valid stream cannot
+       match data before the start. It may therefore be all zeros. */
+    private static CheckPoint startPosition() {
+        try (Memory window = new Memory(WINDOW_SIZE)) {
+            window.clear();
+            return CheckPoint.newPoint(0, 0L, 0, WINDOW_SIZE, window);
+        }
+    }
+
     /* the access point to resume from is the one with the greatest
-       decompressed position not exceeding the requested offset */
+       decompressed position not exceeding the requested offset, or null
+       if the index starts after the offset */
     private CheckPoint findIndexPoint(long offset) {
         Map.Entry<Long, CheckPoint> entry = index.floorEntry(offset);
-        return (entry != null ? entry : index.firstEntry()).getValue();
+        return (entry != null) ? entry.getValue() : null;
     }
 }

@@ -33,7 +33,7 @@ class ExtractorTest {
 
         long[] offsets = {0, 1, len / 4, len / 2, 3 * len / 4, len - 1, len};
         for (long offset : offsets) {
-            try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), index, offset)) {
+            try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), toIndexMap(index), offset, 0, 0, false)) {
                 byte[] tail = readAll(extractor);
                 byte[] expected = Arrays.copyOfRange(pair.uncompressed, (int) offset, len);
                 assertArrayEquals(expected, tail, "offset " + offset);
@@ -52,7 +52,7 @@ class ExtractorTest {
         assertEquals(len, size[0]);
 
         long offset = len / 3;
-        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), index, offset)) {
+        try (Extractor extractor = new Extractor(new ByteArraySeekableInputStream(pair.compressed), toIndexMap(index), offset, 0, 0, false)) {
             byte[] tail = readAll(extractor);
             byte[] expected = Arrays.copyOfRange(pair.uncompressed, (int) offset, len);
             assertArrayEquals(expected, tail);
@@ -332,7 +332,7 @@ class ExtractorTest {
     @Test
     void testResumeWithEmptyIndexIsRejected() {
         assertThrows(IllegalArgumentException.class,
-            () -> new Extractor(new ByteArraySeekableInputStream(new byte[0]), new ArrayList<>(), 0));
+            () -> new Extractor(new ByteArraySeekableInputStream(new byte[0]), new TreeMap<>(), 0, 0, 0, false));
     }
 
     @Test
@@ -343,7 +343,7 @@ class ExtractorTest {
         int len = pair.uncompressed.length;
 
         assertThrows(IOException.class,
-            () -> new Extractor(new ByteArraySeekableInputStream(pair.compressed), index, len + 1));
+            () -> new Extractor(new ByteArraySeekableInputStream(pair.compressed), toIndexMap(index), len + 1, 0, 0, false));
     }
 
     @Test
@@ -356,7 +356,7 @@ class ExtractorTest {
         // Drop the first checkpoint so the index no longer covers offset 0.
         List<CheckPoint> pruned = new ArrayList<>(index.subList(1, index.size()));
         assertThrows(IllegalArgumentException.class,
-            () -> new Extractor(new ByteArraySeekableInputStream(pair.compressed), pruned, 0));
+            () -> new Extractor(new ByteArraySeekableInputStream(pair.compressed), toIndexMap(pruned), 0, 0, 0, false));
     }
 
     private static byte[] readAll(Extractor extractor) throws IOException {

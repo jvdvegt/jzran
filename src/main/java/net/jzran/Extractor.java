@@ -48,21 +48,6 @@ public class Extractor implements Closeable {
     private boolean eof;
 
     /**
-     * Creates an extractor that resumes decompression at the given
-     * decompressed offset, using the given (non-empty) index.
-     * No new checkpoints are generated; checkpoints missing from the index
-     * are not regenerated.
-     * <p>
-     * If there is no checkpoint at or before {@code offset}, an
-     * {@link IllegalArgumentException} is thrown, since the stream format is
-     * not known and decompression cannot start over from the beginning.
-     */
-    @Deprecated
-    public Extractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset) throws IOException {
-        this(inStream, toIndexMap(checkpoints), offset, 0, 0, false);
-    }
-
-    /**
      * Creates an extractor for the given index.
      * <p>
      * If the index is empty, a new index is built while decompressing, with

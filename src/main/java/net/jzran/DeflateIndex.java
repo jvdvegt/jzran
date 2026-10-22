@@ -87,7 +87,7 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
         }
 
         this.pos = position;
-        this.extractor = new Extractor(inStream, idx, position);
+        this.extractor = newExtractor(inStream, idx, position);
         state = State.OPEN;
     }
 
@@ -142,6 +142,14 @@ public class DeflateIndex extends SeekableInputStream implements Serializable {
     @Override
     public long length() {
         return decompressedSize;
+    }
+
+    /* Resume decompression at the given offset using the index, without
+       capturing: the stream format is not known, so the index must have a
+       checkpoint at or before the offset, or an IllegalArgumentException is
+       thrown. */
+    private static Extractor newExtractor(SeekableInputStream inStream, List<CheckPoint> checkpoints, long offset) throws IOException {
+        return new Extractor(inStream, Extractor.toIndexMap(checkpoints), offset, 0, 0, false);
     }
 
     private void ensureOpen() {
